@@ -1,5 +1,3 @@
-import config
-
 def get_users():
     # Fake database simulation
     return [

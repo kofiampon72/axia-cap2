@@ -1,6 +1,6 @@
-Flask==2.2.5
+Flask
 pytest
 flake8
-Werkzeug
 boto3
+Werkzeug
 gunicorn
