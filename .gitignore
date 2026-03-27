@@ -1,0 +1,7 @@
+__pycache__/
+.pytest_cache/
+.env
+test/
+.dockerignore
+*.pyc
+nginx/
