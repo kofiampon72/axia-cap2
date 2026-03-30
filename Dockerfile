@@ -13,7 +13,8 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends curl && \
       rm -rf /var/lib/apt/lists/* && \
       addgroup --system appgroup && \ 
-      adduser --system --ingroup appgroup --home /app appuser
+      adduser --system --ingroup appgroup --home /app appuser && \
+      chown -R appuser:appgroup /app
 
 # Copy only installed dependencies with the correct ownership from builder stage
 # Copy application code with the correct ownership to runtime stage
