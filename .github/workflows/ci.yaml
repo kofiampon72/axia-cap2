@@ -118,8 +118,6 @@ jobs:
               --name $NEW \
               --restart unless-stopped \
               -p $NEW_PORT:5000 \
-              -e SECRET_NAME=internal-utility-service/production \
-              -e AWS_REGION=us-east-1 \
               $IMAGE
 
             # Wait for health check to pass
@@ -131,9 +129,11 @@ jobs:
             if [ "$HEALTH" == "200" ]; then
                 echo "New container is healthy. Switching traffic..."
                 sudo sed -i "s/localhost:[0-9]*/localhost:$NEW_PORT/" /etc/nginx/sites-available/default
-                sudo nginx -s reload
+                sudo nginx -t
+                sudo systemctl reload nginx
                 echo "Stopping old container: $CURRENT"
                 docker stop $CURRENT 2>/dev/null || true
+                docker rm $CURRENT 2>/dev/null || true
                 echo "Deployment successful! Now serving on port $NEW_PORT"
             else
                 echo "Health check failed! Rolling back..."
