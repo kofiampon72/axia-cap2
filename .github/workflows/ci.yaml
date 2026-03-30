@@ -74,32 +74,70 @@ jobs:
             ${{ env.IMAGE_NAME }}:v1.0.${{ github.run_number }}
             ${{ env.IMAGE_NAME }}:${{ steps.sha.outputs.SHORT_SHA }}
 
-  # ============================================================
-  # JOB 3: Deploy — SSHs into EC2 and pulls the new image
-  # ============================================================
+  # ================================================================
+  # JOB 3: Deploy — SSHs into EC2 and runs the blue-green deployment
+  # ================================================================
   deploy:
-    name: Deploy to EC2
+    name: Deploy to EC2  
     runs-on: ubuntu-latest
     needs: build-and-push
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     steps:
-      - name: Deploy to EC2 via SSH
+      - name: Blue-Green Deployment to EC2 via SSH
         uses: appleboy/ssh-action@v1.0.0
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
-            cd /home/ubuntu/app
-            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/internal-utility-service:latest
-            docker stop internal-utility-service-blue 2>/dev/null || true
-            docker rm internal-utility-service-blue 2>/dev/null || true
+            set -e
+            IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/internal-utility-service:latest"
+            BLUE_NAME="internal-utility-service-blue"
+            GREEN_NAME="internal-utility-service-green"
+
+            echo "Pulling latest image..."
+            docker pull $IMAGE
+
+            # Determine which container is currently active
+            if docker ps -q -f name=$BLUE_NAME | grep -q .; then
+                CURRENT=$BLUE_NAME
+                NEW=$GREEN_NAME
+                NEW_PORT=5001
+            else
+                CURRENT=$GREEN_NAME
+                NEW=$BLUE_NAME
+                NEW_PORT=5000
+            fi
+
+            echo "Starting new container: $NEW on port $NEW_PORT"
+            docker stop $NEW 2>/dev/null || true
+            docker rm $NEW 2>/dev/null || true
+
             docker run -d \
-              --name internal-utility-service-blue \
+              --name $NEW \
               --restart unless-stopped \
-              -p 5000:5000 \
+              -p $NEW_PORT:5000 \
               -e SECRET_NAME=internal-utility-service/production \
               -e AWS_REGION=us-east-1 \
-              ${{ secrets.DOCKERHUB_USERNAME }}/internal-utility-service:latest
-            echo "Deployment complete"
+              $IMAGE
+
+            # Wait for health check to pass
+            echo "Waiting for health check..."
+            sleep 15
+
+            HEALTH=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:$NEW_PORT/health)
+
+            if [ "$HEALTH" == "200" ]; then
+                echo "New container is healthy. Switching traffic..."
+                sudo sed -i "s/localhost:[0-9]*/localhost:$NEW_PORT/" /etc/nginx/sites-available/default
+                sudo nginx -s reload
+                echo "Stopping old container: $CURRENT"
+                docker stop $CURRENT 2>/dev/null || true
+                echo "Deployment successful! Now serving on port $NEW_PORT"
+            else
+                echo "Health check failed! Rolling back..."
+                docker stop $NEW 2>/dev/null || true
+                echo "Rollback complete. Old container still running."
+                exit 1
+            fi
